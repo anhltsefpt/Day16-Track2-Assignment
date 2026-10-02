@@ -20,3 +20,5 @@ lab-key.pub
 # Environment Variables
 .env
 .env.local
+Temp.md
+.DS_Store
