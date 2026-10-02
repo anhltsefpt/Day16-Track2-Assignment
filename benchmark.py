@@ -1,57 +1,85 @@
-import json, time
-import pandas as pd, lightgbm as lgb
+import json
+import platform
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+ 
+import lightgbm as lgb
+import numpy as np
+import pandas as pd
+import sklearn
+from sklearn.metrics import (
+    accuracy_score, f1_score, precision_score, recall_score, roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_score, recall_score
-
-load_start = time.time()
-# Lấy creditcard.csv từ https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
-transactions = pd.read_csv("creditcard.csv")
-load_time_s = time.time() - load_start
-
-features, labels = transactions.drop(columns=["Class"]), transactions["Class"]
-features_trainval, features_test, labels_trainval, labels_test = train_test_split(
-    features, labels, test_size=0.2, stratify=labels, random_state=42)
-features_train, features_val, labels_train, labels_val = train_test_split(
-    features_trainval, labels_trainval, test_size=0.1, stratify=labels_trainval, random_state=42)
-
-num_normal = (labels_train == 0).sum()
-num_fraud = (labels_train == 1).sum()
-model = lgb.LGBMClassifier(n_estimators=1000, learning_rate=0.05, num_leaves=31,
-                           scale_pos_weight=num_normal / num_fraud, verbose=-1)
-train_start = time.time()
-model.fit(features_train, labels_train, eval_set=[(features_val, labels_val)], eval_metric="auc",
-          callbacks=[lgb.early_stopping(50), lgb.log_evaluation(100)])
-train_time_s = time.time() - train_start
-
-fraud_probability = model.predict_proba(features_test)[:, 1]
-predicted_labels = (fraud_probability >= 0.5).astype(int)
-
-single_row = features_test.iloc[[0]]
-num_repeats = 100
-latency_start = time.perf_counter()
-for _ in range(num_repeats):
-    model.predict_proba(single_row)
-latency_per_row_ms = (time.perf_counter() - latency_start) / num_repeats * 1000
-
-batch_size = 1000
-batch_rows = features_test.iloc[:batch_size]
-batch_start = time.perf_counter()
-model.predict_proba(batch_rows)
-batch_time_s = time.perf_counter() - batch_start
-
+ 
+seed = 16
+started = time.perf_counter()
+df = pd.read_csv("creditcard.csv")
+data_load_seconds = time.perf_counter() - started
+X, y = df.drop(columns="Class"), df["Class"]
+ 
+# 60% train, 20% validation, 20% test; cùng phân bố Class.
+X_trainval, X_test, y_trainval, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=seed, stratify=y,
+)
+X_train, X_valid, y_train, y_valid = train_test_split(
+    X_trainval, y_trainval, test_size=0.25, random_state=seed,
+    stratify=y_trainval,
+)
+model = lgb.LGBMClassifier(
+    n_estimators=300, learning_rate=0.05, random_state=seed,
+    n_jobs=2, verbosity=-1,
+)
+started = time.perf_counter()
+model.fit(
+    X_train, y_train, eval_set=[(X_valid, y_valid)], eval_metric="auc",
+    callbacks=[lgb.early_stopping(20, verbose=False)],
+)
+training_seconds = time.perf_counter() - started
+ 
+probabilities = model.predict_proba(X_test)[:, 1]
+predictions = (probabilities >= 0.5).astype(int)
+one_row, batch = X_test.iloc[:1], X_test.iloc[:1000]
+model.predict_proba(one_row)  # Warm-up ngoài phần đo.
+model.predict_proba(batch)
+ 
+def measured_seconds(data, repeats):
+    elapsed = []
+    for _ in range(repeats):
+        started = time.perf_counter()
+        model.predict_proba(data)
+        elapsed.append(time.perf_counter() - started)
+    return float(np.median(elapsed))
+ 
+single_seconds = measured_seconds(one_row, 50)
+batch_seconds = measured_seconds(batch, 10)
 result = {
-    "load_time_s": round(load_time_s, 3),
-    "train_time_s": round(train_time_s, 3),
+    "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+    "architecture": platform.machine(),
+    "versions": {
+        "python": platform.python_version(), "lightgbm": lgb.__version__,
+        "sklearn": sklearn.__version__, "pandas": pd.__version__,
+        "numpy": np.__version__,
+    },
+    "dataset_rows": len(df), "fraud_rows": int(y.sum()), "seed": seed,
+    "split": {"train": len(X_train), "validation": len(X_valid), "test": len(X_test)},
+    "n_jobs": 2, "decision_threshold": 0.5,
+    "data_load_seconds": data_load_seconds,
+    "training_seconds": training_seconds,
     "best_iteration": int(model.best_iteration_),
-    "auc_roc": round(roc_auc_score(labels_test, fraud_probability), 4),
-    "accuracy": round(accuracy_score(labels_test, predicted_labels), 4),
-    "f1": round(f1_score(labels_test, predicted_labels), 4),
-    "precision": round(precision_score(labels_test, predicted_labels), 4),
-    "recall": round(recall_score(labels_test, predicted_labels), 4),
-    "latency_1row_ms": round(latency_per_row_ms, 3),
-    "throughput_1000rows_s": round(batch_time_s, 4),
-    "throughput_rows_per_s": round(batch_size / batch_time_s, 1),
+    "auc_roc": float(roc_auc_score(y_test, probabilities)),
+    "accuracy": float(accuracy_score(y_test, predictions)),
+    "f1": float(f1_score(y_test, predictions, zero_division=0)),
+    "precision": float(precision_score(y_test, predictions, zero_division=0)),
+    "recall": float(recall_score(y_test, predictions, zero_division=0)),
+    "latency_1_row_ms": single_seconds * 1000,
+    "latency_repeats": 50,
+    "batch_rows": len(batch), "batch_repeats": 10,
+    "batch_1000_rows_seconds": batch_seconds,
+    "throughput_1000_rows_per_second": len(batch) / batch_seconds,
+    "timing_summary": "median; warm-up excluded; predict_proba on pandas input",
 }
-print(json.dumps(result, indent=2))
-with open("benchmark_result.json", "w") as output_file:
-    json.dump(result, output_file, indent=2)
+Path("benchmark_result.json").write_text(
+    json.dumps(result, indent=2, allow_nan=False), encoding="utf-8",
+)

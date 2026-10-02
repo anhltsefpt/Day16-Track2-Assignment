@@ -1,13 +1,36 @@
 {
-  "load_time_s": 2.683,
-  "train_time_s": 3.594,
-  "best_iteration": 2,
-  "auc_roc": 0.0396,
-  "accuracy": 0.9919,
-  "f1": 0.0,
-  "precision": 0.0,
-  "recall": 0.0,
-  "latency_1row_ms": 1.169,
-  "throughput_1000rows_s": 0.0015,
-  "throughput_rows_per_s": 677636.7
+  "recorded_at_utc": "2026-10-02T10:12:42.406308+00:00",
+  "architecture": "x86_64",
+  "versions": {
+    "python": "3.11.2",
+    "lightgbm": "4.7.0",
+    "sklearn": "1.9.1",
+    "pandas": "3.0.6",
+    "numpy": "2.4.6"
+  },
+  "dataset_rows": 284807,
+  "fraud_rows": 492,
+  "seed": 16,
+  "split": {
+    "train": 170883,
+    "validation": 56962,
+    "test": 56962
+  },
+  "n_jobs": 2,
+  "decision_threshold": 0.5,
+  "data_load_seconds": 2.6628274820000115,
+  "training_seconds": 4.103759167000135,
+  "best_iteration": 68,
+  "auc_roc": 0.9768480003847346,
+  "accuracy": 0.9995084442259752,
+  "f1": 0.8478260869565217,
+  "precision": 0.9069767441860465,
+  "recall": 0.7959183673469388,
+  "latency_1_row_ms": 1.247945999921285,
+  "latency_repeats": 50,
+  "batch_rows": 1000,
+  "batch_repeats": 10,
+  "batch_1000_rows_seconds": 0.0037387580000540765,
+  "throughput_1000_rows_per_second": 267468.5015680438,
+  "timing_summary": "median; warm-up excluded; predict_proba on pandas input"
 }
